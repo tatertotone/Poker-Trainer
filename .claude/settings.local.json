@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")",
+      "Bash(brew list:*)",
+      "Read(//Users/tate/**)",
+      "Bash(npm --version)",
+      "Bash(npm install:*)",
+      "Bash(mkdir -p \"/Users/tate/Ranging Practice/server/src\")",
+      "Bash(npm init:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx vite *)",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}
