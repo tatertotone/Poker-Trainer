@@ -2,7 +2,7 @@
   "name": "poker-trainer",
   "private": true,
   "scripts": {
-    "build": "cd client && npm install && npm run build",
+    "build": "cd client && npm install && npm run build && cp -r dist ../dist",
     "install": "cd client && npm install"
   }
 }
