@@ -14,7 +14,11 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(npx vite *)",
       "Bash(python3 -c ' *)",
-      "Bash(git remote *)"
+      "Bash(git remote *)",
+      "Bash(git ls-tree *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }

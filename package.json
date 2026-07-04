@@ -1,8 +1,10 @@
 {
   "name": "poker-trainer",
   "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0"
+  },
   "scripts": {
-    "build": "cd client && npm install && npm run build && cp -r dist ../dist",
-    "install": "cd client && npm install"
+    "build": "cd client && npm install && npm run build && cp -r dist ../dist"
   }
 }

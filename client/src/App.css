@@ -2512,3 +2512,244 @@ button { cursor: pointer; font-family: inherit; }
   cursor: pointer;
   flex-shrink: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DECISION GAME (Ranging Opponents tab)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Override game col width for decision game — needs more space for the table */
+.dg-game-col { width: 560px !important; }
+
+/* ── Poker table ─────────────────────────────────────────────────────────── */
+
+.dg-table-wrapper {
+  position: relative;
+  width: 100%;
+  height: 300px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.dg-felt {
+  position: absolute;
+  top: 24px; bottom: 24px;
+  left: 40px; right: 40px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 40% 35%, #1e6b38 0%, #0f4020 55%, #0a2e16 100%);
+  border: 7px solid #7a5a1e;
+  box-shadow:
+    inset 0 0 50px rgba(0,0,0,0.5),
+    0 8px 32px rgba(0,0,0,0.7),
+    0 0 0 2px #4a3710;
+}
+
+/* Community cards + pot centered in felt */
+.dg-community {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dg-board-cards { display: flex; gap: 5px; align-items: center; }
+
+.dg-card {
+  background: #fff;
+  border-radius: 4px;
+  width: 30px; height: 42px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-size: 0.78rem; font-weight: 800;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  line-height: 1;
+}
+.dg-card-suit { font-size: 0.68rem; }
+
+.dg-preflop-label {
+  font-size: 0.65rem; font-weight: 700;
+  letter-spacing: 1.5px; color: rgba(255,255,255,0.25);
+}
+
+.dg-pot-chip {
+  display: flex; flex-direction: column; align-items: center;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,215,0,0.3);
+  border-radius: 12px;
+  padding: 3px 12px;
+}
+.dg-pot-label { font-size: 0.55rem; font-weight: 700; color: rgba(251,191,36,0.6); letter-spacing: 1px; text-transform: uppercase; }
+.dg-pot-amount { font-size: 0.88rem; font-weight: 700; color: #fbbf24; }
+
+/* Bet chips near seats */
+.dg-bet-chip {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(251,191,36,0.15);
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fbbf24;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.dg-bet-chip--hero {
+  background: rgba(96,165,250,0.15);
+  border-color: #60a5fa;
+  color: #60a5fa;
+}
+
+/* ── Seats ───────────────────────────────────────────────────────────────── */
+
+.dg-seat {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 3px; width: 68px;
+}
+.dg-seat--other { opacity: 0.4; }
+
+.dg-seat-cards { display: flex; gap: 2px; }
+
+.dg-hole-card {
+  width: 20px; height: 28px;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.64rem; font-weight: 800; line-height: 1;
+  flex-direction: column;
+}
+.dg-hole-card--up { background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.7); }
+.dg-hole-suit { font-size: 0.55rem; }
+.dg-hole-card--down {
+  background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
+  border: 1px solid rgba(255,255,255,0.15);
+}
+.dg-hole-card--folded {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.dg-seat-label { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.dg-seat-pos { font-size: 0.68rem; font-weight: 700; color: var(--text-secondary); }
+.dg-seat--hero .dg-seat-pos { color: #93c5fd; }
+.dg-seat--villain .dg-seat-pos { color: #c084fc; }
+.dg-seat-stack { font-size: 0.6rem; color: var(--text-muted); }
+
+.dg-seat-badge {
+  font-size: 0.52rem; font-weight: 800;
+  padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.dg-seat-badge--hero { background: rgba(96,165,250,0.2); color: #93c5fd; border: 1px solid #3b82f6; }
+.dg-seat-badge--villain { background: rgba(192,132,252,0.2); color: #c084fc; border: 1px solid #a855f7; }
+
+.dg-dealer-chip {
+  position: absolute; top: -6px; right: -6px;
+  width: 16px; height: 16px;
+  border-radius: 50%; border: 1px solid rgba(255,255,255,0.3);
+  background: #f5d57a; color: #111; font-size: 0.55rem; font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ── Action panel ────────────────────────────────────────────────────────── */
+
+.dg-action-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 12px;
+  flex-shrink: 0;
+}
+
+.dg-villain-action {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: rgba(192,132,252,0.08);
+  border: 1px solid rgba(168,85,247,0.25);
+  border-radius: var(--radius-md);
+}
+.dg-villain-label {
+  font-size: 0.72rem; font-weight: 700;
+  color: #c084fc; text-transform: uppercase; letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.dg-villain-verb {
+  font-size: 0.88rem; font-weight: 600; color: var(--text-primary);
+}
+
+.dg-hero-label {
+  font-size: 0.72rem; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.dg-action-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.dg-action-btn {
+  padding: 8px 18px; border-radius: var(--radius-md);
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dg-action-btn--fold { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.3); }
+.dg-action-btn--fold:hover { background: rgba(239,68,68,0.22); }
+.dg-action-btn--call, .dg-action-btn--check { background: rgba(34,197,94,0.12); color: #4ade80; border-color: rgba(34,197,94,0.3); }
+.dg-action-btn--call:hover, .dg-action-btn--check:hover { background: rgba(34,197,94,0.22); }
+.dg-action-btn--bet, .dg-action-btn--raise { background: rgba(96,165,250,0.12); color: #93c5fd; border-color: rgba(96,165,250,0.3); }
+.dg-action-btn--bet:hover, .dg-action-btn--raise:hover { background: rgba(96,165,250,0.22); }
+.dg-action-btn--allin { background: rgba(251,191,36,0.12); color: #fbbf24; border-color: rgba(251,191,36,0.3); }
+.dg-action-btn--confirm { background: rgba(96,165,250,0.15); color: #93c5fd; border-color: rgba(96,165,250,0.4); }
+.dg-action-btn--confirm:hover { background: rgba(96,165,250,0.25); }
+.dg-action-btn--cancel { background: none; color: var(--text-muted); border-color: var(--border); }
+.dg-action-btn--cancel:hover { color: var(--text-secondary); }
+
+.dg-bet-row { display: flex; align-items: center; gap: 8px; }
+.dg-bet-input {
+  width: 90px; padding: 7px 10px;
+  background: var(--bg-overlay); border: 1px solid var(--border);
+  border-radius: var(--radius-md); color: var(--text-primary);
+  font-size: 0.88rem; font-weight: 600;
+}
+.dg-bet-input:focus { outline: none; border-color: #60a5fa; }
+.dg-bet-unit { font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0; }
+
+/* ── Decision log in sidebar ─────────────────────────────────────────────── */
+
+.dg-decision-log {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.dg-log-row { display: flex; justify-content: space-between; align-items: center; }
+.dg-log-street { font-size: 0.72rem; color: var(--text-muted); text-transform: capitalize; }
+.dg-log-action { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+
+/* ── Complete bar ────────────────────────────────────────────────────────── */
+
+.dg-complete-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 0.85rem; color: var(--text-secondary);
+}
+
+/* ── Chat ────────────────────────────────────────────────────────────────── */
+
+.dg-chat {
+  display: flex; flex-direction: column;
+  height: calc(100vh - 52px);
+  overflow: hidden;
+}
+.dg-chat .messages {
+  flex: 1; overflow-y: auto;
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
