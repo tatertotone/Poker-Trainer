@@ -39,7 +39,7 @@ Evaluate the student's range assignment for this street.`;
 
   try {
     const msg = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       max_tokens: 300,
       system: buildSystem(villainName, villainContext),
       messages: [{ role: 'user', content: prompt }],

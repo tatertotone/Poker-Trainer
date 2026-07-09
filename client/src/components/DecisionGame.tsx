@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { FullScenario, Action, StreetName, ChatMessage, VillainProfile, Card, Suit } from '../types/poker';
 import { formatCard } from '../utils/scenarioGenerator';
 import VillainPicker from './VillainPicker';
+import RangeCategoryPicker from './RangeCategoryPicker';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ interface HeroDecision {
   heroBetBB: number | null;
   potBefore: number;
   board: string;
+  rangeCats: string[];
 }
 
 interface ActionOption {
@@ -245,6 +247,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
   const [betMode, setBetMode] = useState<'bet' | 'raise' | null>(null);
   const [betValue, setBetValue] = useState('');
   const [phase, setPhase] = useState<'playing' | 'feedback'>('playing');
+  const [currentRangeCats, setCurrentRangeCats] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [followUpInput, setFollowUpInput] = useState('');
@@ -263,6 +266,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     setBetMode(null);
     setBetValue('');
     setPhase('playing');
+    setCurrentRangeCats(new Set());
     setMessages([]);
     setIsLoading(false);
     setFollowUpInput('');
@@ -287,6 +291,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     for (const d of finalDecisions) {
       s += `${d.street.toUpperCase()} — Board: ${d.board}\n`;
       s += `  Villain: ${d.villainActionStr}\n`;
+      s += `  Hero's range read on villain: [${d.rangeCats.join(', ') || 'none selected'}]\n`;
       const heroStr = d.heroAction === 'bet' || d.heroAction === 'raise'
         ? `${d.heroAction}s ${d.heroBetBB}BB`
         : `${d.heroAction}s`;
@@ -401,6 +406,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       heroBetBB,
       potBefore: pot,
       board,
+      rangeCats: [...currentRangeCats],
     };
 
     const newDecisions = [...decisions, decision];
@@ -431,7 +437,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       setBetMode(null);
       setBetValue('');
     }
-  }, [streetIndex, vilAction, vilActionStr, pot, decisions, currentStreet, scenario, buildHandSummary, streamFeedback]);
+  }, [streetIndex, vilAction, vilActionStr, pot, decisions, currentStreet, scenario, currentRangeCats, buildHandSummary, streamFeedback]);
 
   const handleAction = (opt: ActionOption) => {
     if (opt.needsBet) {
@@ -487,13 +493,18 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
             <div className="dg-decision-log">
               <div className="t-section-label">Decisions</div>
               {decisions.map((d, i) => (
-                <div key={i} className="dg-log-row">
-                  <span className="dg-log-street">{d.street}</span>
-                  <span className="dg-log-action">
-                    {d.heroAction === 'bet' || d.heroAction === 'raise'
-                      ? `${d.heroAction} ${d.heroBetBB}BB`
-                      : d.heroAction}
-                  </span>
+                <div key={i} className="dg-log-row dg-log-row--stacked">
+                  <div>
+                    <span className="dg-log-street">{d.street}</span>
+                    <span className="dg-log-action">
+                      {d.heroAction === 'bet' || d.heroAction === 'raise'
+                        ? `${d.heroAction} ${d.heroBetBB}BB`
+                        : d.heroAction}
+                    </span>
+                  </div>
+                  {d.rangeCats.length > 0 && (
+                    <span className="dg-log-range">{d.rangeCats.join(', ')}</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -524,6 +535,12 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
                 <span className="dg-villain-label">{scenario.villainPosition}</span>
                 <span className="dg-villain-verb">{vilActionStr}</span>
               </div>
+
+              <RangeCategoryPicker
+                selected={currentRangeCats}
+                previousSelected={streetIndex > 0 ? new Set(decisions[streetIndex - 1]?.rangeCats ?? []) : undefined}
+                onChange={setCurrentRangeCats}
+              />
 
               <div className="dg-hero-label">Your action — {currentStreet}</div>
 
