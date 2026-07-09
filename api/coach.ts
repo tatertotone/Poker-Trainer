@@ -67,7 +67,7 @@ export default async function handler(req: any, res: any) {
 
   try {
     const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       max_tokens: 1800,
       system: buildSystem(villainName, villainContext),
       messages,

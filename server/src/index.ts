@@ -112,7 +112,7 @@ Evaluate the student's range assignment for this street.`;
 
   try {
     const msg = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       max_tokens: 300,
       system: buildStreetNoteSystem(villainName, villainContext),
       messages: [{ role: 'user', content: prompt }],
@@ -158,7 +158,7 @@ app.post('/api/coach', async (req, res) => {
 
   try {
     const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       max_tokens: 1800,
       system: buildDebriefSystem(villainName, villainContext),
       messages,
@@ -187,14 +187,25 @@ function buildDecisionSystem(villainName?: string, villainContext?: string): str
   return `You are an expert poker coach specialising in exploitative play against specific player types. The student is practising making in-game decisions as the hero, then getting feedback on whether their decisions were exploitatively correct against a specific villain type.${vs}
 IMPORTANT: Do NOT give GTO advice. Focus entirely on exploitative play — evaluate each decision based on what is most profitable against THIS specific villain's tendencies and patterns.
 
+Before each of their decisions, the student also tags villain's likely range using these fixed categories:
+- Can play for stacks (CPSF) — hands strong enough to get all-in for
+- Thick value — strong value hands worth betting big
+- Thin value — marginal hands worth a smaller value bet
+- Showdown value (SDV) — hands with some equity but not worth betting, just checking down
+- Draws — drawing hands with little current equity but outs
+- Air — no meaningful equity, pure bluff-catchers/bluffs
+
+Each decision point in the hand summary includes "Hero's range read on villain" listing which categories the student selected for that street.
+
 When coaching:
 - Reference the villain's specific tendencies when explaining why a decision is right or wrong
 - Be concrete: "Against a Nit, when they bet the turn here, their range is heavily weighted towards value, so your fold with second pair is correct"
 - Consider hand strength relative to villain's likely range at each decision point
 - Highlight when the student over-folded or over-called against this villain type
+- Evaluate the student's range read at each street: did they correctly include/exclude the right categories given the villain type, board texture, and action? Call out any category they missed or shouldn't have included
 
 Structure your response:
-1. Walk through each decision point (preflop, then each street reached), one paragraph each
+1. Walk through each decision point (preflop, then each street reached), one paragraph each — cover both the range read and the action taken
 2. **Key exploitative adjustments** — 2–3 specific adjustments for playing against this villain type in future
 
 End with:
@@ -223,7 +234,7 @@ app.post('/api/decision-coach', async (req, res) => {
 
   try {
     const stream = anthropic.messages.stream({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       max_tokens: 1800,
       system: buildDecisionSystem(villainName, villainContext),
       messages,
