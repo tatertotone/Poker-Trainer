@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { FullScenario, Action, StreetName, ChatMessage, VillainProfile, Card, Suit } from '../types/poker';
+import type { FullScenario, Action, StreetName, ChatMessage, VillainProfile, Card, Suit, Position } from '../types/poker';
 import { formatCard } from '../utils/scenarioGenerator';
 import VillainPicker from './VillainPicker';
 import RangeCategoryPicker from './RangeCategoryPicker';
@@ -14,28 +14,30 @@ const SUIT_COLOR: Record<Suit, string> = { h: '#dc2626', d: '#dc2626', c: '#1a7a
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type HeroActionType = 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'allin';
-
-interface HeroDecision {
-  streetIndex: number;
-  street: StreetName;
-  villainActionStr: string;
-  villainBetBB: number | null;
-  heroAction: HeroActionType;
-  heroBetBB: number | null;
-  potBefore: number;
-  board: string;
-  rangeCats: string[];
-}
+type HeroActionType = 'fold' | 'check' | 'call' | 'bet' | 'raise';
 
 interface ActionOption {
   label: string;
   value: HeroActionType;
   needsBet?: boolean;
-  callAmount?: number;
+}
+
+interface Facing {
+  toBB: number;
+}
+
+interface LogEntry {
+  street: StreetName;
+  position: Position;
+  isHero: boolean;
+  text: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function getVillainAction(scenario: FullScenario, streetIndex: number): Action | null {
   return scenario.streets[streetIndex].actions.find(
@@ -43,52 +45,50 @@ function getVillainAction(scenario: FullScenario, streetIndex: number): Action |
   ) ?? null;
 }
 
-function formatVillainActionStr(action: Action | null, pot: number): string {
-  if (!action) return 'checks';
-  const v = action.action;
-  if (v === 'checks') return 'checks';
-  if (v === 'bets') {
-    const bb = action.sizingBB;
-    const pct = action.sizingPct;
-    if (bb) return `bets ${bb}BB`;
-    if (pct) return `bets ${Math.round(pot * pct / 100 * 10) / 10}BB (${pct}% pot)`;
-    return 'bets';
+function actionText(kind: 'checks' | 'calls' | 'bets' | 'raises' | 'folds', toBB?: number): string {
+  switch (kind) {
+    case 'checks': return 'Checks';
+    case 'calls': return 'Calls';
+    case 'folds': return 'Folds';
+    case 'bets': return `Bets ${toBB}BB`;
+    case 'raises': return `Raises to ${toBB}BB`;
   }
-  if (v === 'raises' || v === '3-bets') {
-    return action.sizingBB ? `raises to ${action.sizingBB}BB` : 'raises';
-  }
-  if (v === 'check-raises') {
-    return action.sizingBB ? `check-raises to ${action.sizingBB}BB` : 'check-raises';
-  }
-  if (v === 'calls') return 'calls';
-  return v;
 }
 
-function getVillainBetBB(action: Action | null, pot: number): number | null {
-  if (!action) return null;
-  const v = action.action;
-  if (v === 'checks' || v === 'calls') return null;
-  if (action.sizingBB) return action.sizingBB;
-  if (action.sizingPct) return Math.round(pot * action.sizingPct / 100 * 10) / 10;
-  return null;
-}
-
-function getHeroOptions(action: Action | null, isPreflop: boolean): ActionOption[] {
-  const v = action?.action;
-  if (!v || v === 'checks') {
-    return isPreflop
-      ? [{ label: 'Fold', value: 'fold' }, { label: 'Check/Limp', value: 'call' }, { label: 'Raise', value: 'raise', needsBet: true }]
-      : [{ label: 'Check', value: 'check' }, { label: 'Bet', value: 'bet', needsBet: true }];
+function getHeroOptions(facing: Facing | null, callDelta: number, isPreflop: boolean, raiseCount: number): ActionOption[] {
+  if (!facing) {
+    return [{ label: 'Check', value: 'check' }, { label: 'Bet', value: 'bet', needsBet: true }];
   }
-  if (v === 'calls') {
-    return [{ label: 'Fold', value: 'fold' }, { label: 'Call', value: 'call' }, { label: 'Raise', value: 'raise', needsBet: true }];
-  }
-  const callAmt = action?.sizingBB ?? null;
-  return [
+  const opts: ActionOption[] = [
     { label: 'Fold', value: 'fold' },
-    { label: callAmt ? `Call ${callAmt}BB` : 'Call', value: 'call', callAmount: callAmt ?? undefined },
-    { label: isPreflop ? '3-Bet' : 'Raise', value: 'raise', needsBet: true },
+    { label: `Call ${callDelta}BB`, value: 'call' },
   ];
+  if (raiseCount < 2) {
+    opts.push({ label: isPreflop ? '3-Bet' : 'Raise', value: 'raise', needsBet: true });
+  }
+  return opts;
+}
+
+// Simple profile-flavoured frequencies for reacting to a hero-initiated bet/raise
+// that isn't already scripted in the generated scenario data.
+const FACING_FREQ: Record<string, { fold: number; call: number; raise: number }> = {
+  Nit:                { fold: 0.32, call: 0.53, raise: 0.15 },
+  'Balanced Regular': { fold: 0.20, call: 0.58, raise: 0.22 },
+  LAG:                { fold: 0.12, call: 0.53, raise: 0.35 },
+  'Calling Station':  { fold: 0.05, call: 0.88, raise: 0.07 },
+  Maniac:             { fold: 0.08, call: 0.40, raise: 0.52 },
+  Recreational:       { fold: 0.15, call: 0.75, raise: 0.10 },
+  'GTO Bot':          { fold: 0.20, call: 0.55, raise: 0.25 },
+};
+
+function synthesizeVillainReaction(villainProfile: VillainProfile, allowRaise: boolean): 'fold' | 'call' | 'raise' {
+  const f = FACING_FREQ[villainProfile.name] ?? { fold: 0.2, call: 0.6, raise: 0.2 };
+  const foldW = f.fold, callW = f.call, raiseW = allowRaise ? f.raise : 0;
+  let r = Math.random() * (foldW + callW + raiseW);
+  if (r < foldW) return 'fold';
+  r -= foldW;
+  if (r < callW) return 'call';
+  return 'raise';
 }
 
 function boardStr(cards: Card[]): string {
@@ -139,12 +139,15 @@ interface TableProps {
   scenario: FullScenario;
   streetIndex: number;
   pot: number;
+  heroStack: number;
+  villainStack: number;
   heroBetBB: number | null;
   villainBetBB: number | null;
+  seatAction: Partial<Record<string, string>>;
 }
 
-function PokerTable({ scenario, streetIndex, pot, heroBetBB, villainBetBB }: TableProps) {
-  const { heroPosition, villainPosition, heroCards, stackDepthBB } = scenario;
+function PokerTable({ scenario, streetIndex, pot, heroStack, villainStack, heroBetBB, villainBetBB, seatAction }: TableProps) {
+  const { heroPosition, villainPosition, heroCards } = scenario;
 
   const board = allBoardCards(scenario, streetIndex);
   const allSeats = ['UTG', 'UTG+1', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
@@ -217,8 +220,12 @@ function PokerTable({ scenario, streetIndex, pot, heroBetBB, villainBetBB }: Tab
             </div>
             <div className="dg-seat-label">
               <span className="dg-seat-pos">{pos}</span>
-              {(isHero || isVillain) && <span className="dg-seat-stack">{stackDepthBB}BB</span>}
+              {isHero && <span className="dg-seat-stack">{heroStack.toFixed(1)}BB</span>}
+              {isVillain && <span className="dg-seat-stack">{villainStack.toFixed(1)}BB</span>}
             </div>
+            {(isHero || isVillain) && seatAction[pos] && (
+              <div className="dg-seat-action">{seatAction[pos]}</div>
+            )}
             {isHero && <div className="dg-seat-badge dg-seat-badge--hero">YOU</div>}
             {isVillain && <div className="dg-seat-badge dg-seat-badge--villain">VIL</div>}
             {pos === 'BTN' && <div className="dg-dealer-chip">D</div>}
@@ -240,68 +247,92 @@ interface Props {
 
 export default function DecisionGame({ scenario, villainProfile, onNewScenario, onVillainChange }: Props) {
   const [streetIndex, setStreetIndex] = useState(0);
-  const [decisions, setDecisions] = useState<HeroDecision[]>([]);
-  const [pot, setPot] = useState(1.5);
+  const [pot, setPot] = useState(0);
+  const [heroStack, setHeroStack] = useState(scenario.stackDepthBB);
+  const [villainStack, setVillainStack] = useState(scenario.stackDepthBB);
+  const [heroStreetTotal, setHeroStreetTotal] = useState(0);
   const [heroBetChip, setHeroBetChip] = useState<number | null>(null);
   const [villainBetChip, setVillainBetChip] = useState<number | null>(null);
+  const [facing, setFacing] = useState<Facing | null>(null);
+  const [raiseCount, setRaiseCount] = useState(0);
   const [betMode, setBetMode] = useState<'bet' | 'raise' | null>(null);
   const [betValue, setBetValue] = useState('');
+  const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<'playing' | 'feedback'>('playing');
   const [currentRangeCats, setCurrentRangeCats] = useState<Set<string>>(new Set());
+  const [rangeCatsByStreet, setRangeCatsByStreet] = useState<Partial<Record<StreetName, string[]>>>({});
+  const [seatAction, setSeatAction] = useState<Partial<Record<string, string>>>({});
+  const [actionLog, setActionLog] = useState<LogEntry[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [followUpInput, setFollowUpInput] = useState('');
   const [rating, setRating] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Reset when scenario changes
+  // Authoritative mutable game state — avoids stale closures across the
+  // multi-step async reveal chains (villain scripted actions, synthesized
+  // reactions to hero-initiated bets, etc).
+  const potRef = useRef(0);
+  const heroStackRef = useRef(scenario.stackDepthBB);
+  const villainStackRef = useRef(scenario.stackDepthBB);
+  const heroTotalRef = useRef(0);
+  const villainTotalRef = useRef(0);
+  const raiseCountRef = useRef(0);
+  const actionLogRef = useRef<LogEntry[]>([]);
+  const rangeCatsByStreetRef = useRef<Partial<Record<StreetName, string[]>>>({});
+  const currentRangeCatsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    const vilAction = getVillainAction(scenario, 0);
-    const vilBet = getVillainBetBB(vilAction, 1.5);
-    setStreetIndex(0);
-    setDecisions([]);
-    setPot(1.5);
-    setHeroBetChip(null);
-    setVillainBetChip(vilBet);
-    setBetMode(null);
-    setBetValue('');
-    setPhase('playing');
-    setCurrentRangeCats(new Set());
-    setMessages([]);
-    setIsLoading(false);
-    setFollowUpInput('');
-    setRating(null);
-  }, [scenario]);
+    currentRangeCatsRef.current = currentRangeCats;
+  }, [currentRangeCats]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const currentStreet = STREETS[streetIndex];
-  const isPreflop = streetIndex === 0;
-  const vilAction = getVillainAction(scenario, streetIndex);
-  const vilActionStr = formatVillainActionStr(vilAction, pot);
-  const options = getHeroOptions(vilAction, isPreflop);
+  const pushState = useCallback(() => {
+    setPot(potRef.current);
+    setHeroStack(heroStackRef.current);
+    setVillainStack(villainStackRef.current);
+    setHeroStreetTotal(heroTotalRef.current);
+    setHeroBetChip(heroTotalRef.current || null);
+    setVillainBetChip(villainTotalRef.current || null);
+    setRaiseCount(raiseCountRef.current);
+    setActionLog([...actionLogRef.current]);
+  }, []);
 
-  const buildHandSummary = useCallback((finalDecisions: HeroDecision[]): string => {
+  const announce = useCallback(async (position: Position, isHero: boolean, kind: 'checks' | 'calls' | 'bets' | 'raises' | 'folds', toBB: number | undefined, street: StreetName) => {
+    const text = actionText(kind, toBB);
+    setSeatAction(prev => ({ ...prev, [position]: text }));
+    actionLogRef.current = [...actionLogRef.current, { street, position, isHero, text }];
+    pushState();
+    await sleep(1000);
+  }, [pushState]);
+
+  const buildHandSummary = useCallback((resultNote?: string): string => {
     const { heroPosition, villainPosition, heroCards, stackDepthBB } = scenario;
     const cardStr = heroCards.map(formatCard).join('');
     let s = `Hero: ${heroPosition} | Villain: ${villainPosition} | Stack: ${stackDepthBB}BB | Hero cards: ${cardStr}\n`;
     s += `Villain type: ${villainProfile.name}\n\n`;
-    for (const d of finalDecisions) {
-      s += `${d.street.toUpperCase()} — Board: ${d.board}\n`;
-      s += `  Villain: ${d.villainActionStr}\n`;
-      s += `  Hero's range read on villain: [${d.rangeCats.join(', ') || 'none selected'}]\n`;
-      const heroStr = d.heroAction === 'bet' || d.heroAction === 'raise'
-        ? `${d.heroAction}s ${d.heroBetBB}BB`
-        : `${d.heroAction}s`;
-      s += `  Hero: ${heroStr} (pot was ${d.potBefore.toFixed(1)}BB)\n\n`;
+    if (resultNote) s += `${resultNote}\n`;
+    for (const street of STREETS) {
+      const entries = actionLogRef.current.filter(e => e.street === street);
+      if (entries.length === 0) continue;
+      const idx = STREETS.indexOf(street);
+      const board = street === 'preflop' ? 'preflop' : boardStr(allBoardCards(scenario, idx));
+      s += `${street.toUpperCase()} — Board: ${board}\n`;
+      for (const e of entries) s += `  ${e.position}: ${e.text}\n`;
+      const cats = rangeCatsByStreetRef.current[street];
+      if (street !== 'preflop' && cats) {
+        s += `  Hero's range read on villain: [${cats.join(', ') || 'none selected'}]\n`;
+      }
+      s += '\n';
     }
     return s;
   }, [scenario, villainProfile]);
 
-  const streamFeedback = useCallback(async (summary: string) => {
-    const userMsg: ChatMessage = { role: 'user', content: summary };
+  const streamFeedback = useCallback(async (userText: string) => {
+    const userMsg: ChatMessage = { role: 'user', content: userText };
     setMessages([userMsg]);
     setIsLoading(true);
 
@@ -343,7 +374,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     const match = text.match(/\*\*(?:Updated )?Rating:\s*(\d+)\/100\*\*/i);
     if (match) setRating(parseInt(match[1]));
     setIsLoading(false);
-  }, [villainProfile, API_BASE]);
+  }, [villainProfile]);
 
   const handleFollowUp = async () => {
     if (!followUpInput.trim() || isLoading) return;
@@ -393,71 +424,227 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     setIsLoading(false);
   };
 
-  const commitDecision = useCallback((heroAction: HeroActionType, heroBetBB: number | null) => {
-    const board = streetIndex === 0 ? 'preflop' : boardStr(allBoardCards(scenario, streetIndex));
-    const vilBet = getVillainBetBB(vilAction, pot);
+  const kickOffCoach = useCallback(async (resultNote?: string) => {
+    const summary = buildHandSummary(resultNote);
+    await streamFeedback(`Please evaluate my decisions in this hand:\n\n${summary}`);
+  }, [buildHandSummary, streamFeedback]);
 
-    const decision: HeroDecision = {
-      streetIndex,
-      street: currentStreet,
-      villainActionStr: vilActionStr,
-      villainBetBB: vilBet,
-      heroAction,
-      heroBetBB,
-      potBefore: pot,
-      board,
-      rangeCats: [...currentRangeCats],
-    };
-
-    const newDecisions = [...decisions, decision];
-    setDecisions(newDecisions);
-
-    // Update pot
-    let newPot = pot;
-    if (vilBet) newPot += vilBet;
-    if (heroAction === 'call' && vilBet) newPot += vilBet;
-    if ((heroAction === 'bet' || heroAction === 'raise') && heroBetBB) newPot += heroBetBB;
-    setPot(newPot);
-
-    if (heroAction === 'fold' || streetIndex === 3) {
-      // Hand over — get feedback
-      setHeroBetChip(heroBetBB);
-      setVillainBetChip(null);
-      setPhase('feedback');
-      const summary = `Please evaluate my decisions in this hand:\n\n${buildHandSummary(newDecisions)}`;
-      void streamFeedback(summary);
-    } else {
-      // Advance to next street
-      const nextIndex = streetIndex + 1;
-      const nextVilAction = getVillainAction(scenario, nextIndex);
-      const nextVilBet = getVillainBetBB(nextVilAction, newPot);
-      setHeroBetChip(heroBetBB);
-      setVillainBetChip(nextVilBet);
-      setStreetIndex(nextIndex);
-      setBetMode(null);
-      setBetValue('');
+  // Reveals villain's scripted opening action for a street (villain always
+  // opens preflop, and opens postflop streets whenever hero is IP). Ends
+  // either with facing=null (villain checked — hero's turn to check/bet) or
+  // facing={toBB} (villain bet/raised — hero must fold/call/raise).
+  const runVillainOpensStreet = useCallback(async (idx: number) => {
+    const street = STREETS[idx];
+    const villainOpens = idx === 0 || scenario.heroIsIP;
+    if (!villainOpens) {
+      setFacing(null);
+      setBusy(false);
+      return;
     }
-  }, [streetIndex, vilAction, vilActionStr, pot, decisions, currentStreet, scenario, currentRangeCats, buildHandSummary, streamFeedback]);
-
-  const handleAction = (opt: ActionOption) => {
-    if (opt.needsBet) {
-      setBetMode(opt.value as 'bet' | 'raise');
-      const defaultBB = opt.value === 'raise' && opt.callAmount
-        ? opt.callAmount * 3
-        : Math.round(pot * 0.6 * 10) / 10;
-      setBetValue(String(defaultBB));
+    setBusy(true);
+    const action = getVillainAction(scenario, idx);
+    if (!action || action.action === 'checks') {
+      await announce(scenario.villainPosition, false, 'checks', undefined, street);
+      setFacing(null);
     } else {
-      commitDecision(opt.value, null);
+      const toBB = action.sizingBB ?? Math.round(potRef.current * (action.sizingPct ?? 0) / 100 * 10) / 10;
+      villainTotalRef.current = toBB;
+      villainStackRef.current -= toBB;
+      potRef.current += toBB;
+      raiseCountRef.current = 1;
+      pushState();
+      await announce(scenario.villainPosition, false, action.action === 'raises' ? 'raises' : 'bets', toBB, street);
+      setFacing({ toBB });
     }
-  };
+    setBusy(false);
+  }, [scenario, announce, pushState]);
 
-  const handleBetSubmit = () => {
-    const bb = parseFloat(betValue);
-    if (isNaN(bb) || bb <= 0) return;
-    commitDecision(betMode === 'bet' ? 'bet' : 'raise', bb);
+  // Resets per-hand state and kicks off the preflop opening whenever a new
+  // scenario (new hand) arrives.
+  useEffect(() => {
+    potRef.current = 0;
+    heroStackRef.current = scenario.stackDepthBB;
+    villainStackRef.current = scenario.stackDepthBB;
+    heroTotalRef.current = 0;
+    villainTotalRef.current = 0;
+    raiseCountRef.current = 0;
+    actionLogRef.current = [];
+    rangeCatsByStreetRef.current = {};
+
+    setStreetIndex(0);
+    setPot(0);
+    setHeroStack(scenario.stackDepthBB);
+    setVillainStack(scenario.stackDepthBB);
+    setHeroStreetTotal(0);
+    setHeroBetChip(null);
+    setVillainBetChip(null);
+    setFacing(null);
+    setRaiseCount(0);
     setBetMode(null);
     setBetValue('');
+    setBusy(false);
+    setPhase('playing');
+    setCurrentRangeCats(new Set());
+    setRangeCatsByStreet({});
+    setSeatAction({});
+    setActionLog([]);
+    setMessages([]);
+    setIsLoading(false);
+    setFollowUpInput('');
+    setRating(null);
+
+    void runVillainOpensStreet(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenario]);
+
+  const resolveStreetEnd = useCallback(async (justResolvedStreet: StreetName) => {
+    if (justResolvedStreet !== 'preflop') {
+      rangeCatsByStreetRef.current = { ...rangeCatsByStreetRef.current, [justResolvedStreet]: [...currentRangeCatsRef.current] };
+      setRangeCatsByStreet({ ...rangeCatsByStreetRef.current });
+    }
+    if (justResolvedStreet === 'river') {
+      setPhase('feedback');
+      await kickOffCoach();
+      setBusy(false);
+      return;
+    }
+    setSeatAction({});
+    heroTotalRef.current = 0;
+    villainTotalRef.current = 0;
+    raiseCountRef.current = 0;
+    pushState();
+    setFacing(null);
+    const nextIdx = STREETS.indexOf(justResolvedStreet) + 1;
+    setStreetIndex(nextIdx);
+    await runVillainOpensStreet(nextIdx);
+  }, [pushState, runVillainOpensStreet, kickOffCoach]);
+
+  const endHand = useCallback(async (resultNote: string) => {
+    setPhase('feedback');
+    await kickOffCoach(resultNote);
+    setBusy(false);
+  }, [kickOffCoach]);
+
+  const handleHeroAction = useCallback(async (kind: HeroActionType, toBB?: number) => {
+    if (busy) return;
+    setBusy(true);
+    setBetMode(null);
+    setBetValue('');
+    const street = STREETS[streetIndex];
+
+    if (kind === 'fold') {
+      await announce(scenario.heroPosition, true, 'folds', undefined, street);
+      await endHand(`Result: Hero folds. Villain (${scenario.villainPosition}) wins the ${potRef.current.toFixed(1)}BB pot.`);
+      return;
+    }
+
+    if (kind === 'check') {
+      await announce(scenario.heroPosition, true, 'checks', undefined, street);
+      if (scenario.heroIsIP) {
+        // Hero checks back after villain's earlier check — street is over.
+        await resolveStreetEnd(street);
+        return;
+      }
+      // Hero is OOP and opened with a check — reveal villain's scripted reaction.
+      const vAction = getVillainAction(scenario, streetIndex);
+      if (!vAction || vAction.action === 'checks') {
+        await announce(scenario.villainPosition, false, 'checks', undefined, street);
+        await resolveStreetEnd(street);
+      } else {
+        const vToBB = vAction.sizingBB ?? Math.round(potRef.current * (vAction.sizingPct ?? 0) / 100 * 10) / 10;
+        villainTotalRef.current = vToBB;
+        villainStackRef.current -= vToBB;
+        potRef.current += vToBB;
+        raiseCountRef.current = 1;
+        pushState();
+        await announce(scenario.villainPosition, false, 'bets', vToBB, street);
+        setFacing({ toBB: vToBB });
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (kind === 'call') {
+      const callTo = facing?.toBB ?? villainTotalRef.current;
+      const delta = Math.round((callTo - heroTotalRef.current) * 10) / 10;
+      heroTotalRef.current = callTo;
+      heroStackRef.current -= delta;
+      potRef.current += delta;
+      pushState();
+      await announce(scenario.heroPosition, true, 'calls', undefined, street);
+      await resolveStreetEnd(street);
+      return;
+    }
+
+    // bet / raise
+    const myToBB = toBB!;
+    const delta = Math.round((myToBB - heroTotalRef.current) * 10) / 10;
+    heroTotalRef.current = myToBB;
+    heroStackRef.current -= delta;
+    potRef.current += delta;
+    raiseCountRef.current += 1;
+    pushState();
+    await announce(scenario.heroPosition, true, kind === 'bet' ? 'bets' : 'raises', myToBB, street);
+
+    const allowRaise = raiseCountRef.current < 2;
+    const reaction = synthesizeVillainReaction(villainProfile, allowRaise);
+
+    if (reaction === 'fold') {
+      await announce(scenario.villainPosition, false, 'folds', undefined, street);
+      await endHand(`Result: Villain folds. Hero wins the ${potRef.current.toFixed(1)}BB pot.`);
+      return;
+    }
+
+    if (reaction === 'call') {
+      const vDelta = Math.round((myToBB - villainTotalRef.current) * 10) / 10;
+      villainTotalRef.current = myToBB;
+      villainStackRef.current -= vDelta;
+      potRef.current += vDelta;
+      pushState();
+      await announce(scenario.villainPosition, false, 'calls', undefined, street);
+      await resolveStreetEnd(street);
+      return;
+    }
+
+    // villain raises
+    const raiseTo = Math.round(myToBB * 2.2 * 2) / 2;
+    const vDelta = Math.round((raiseTo - villainTotalRef.current) * 10) / 10;
+    villainTotalRef.current = raiseTo;
+    villainStackRef.current -= vDelta;
+    potRef.current += vDelta;
+    raiseCountRef.current += 1;
+    pushState();
+    await announce(scenario.villainPosition, false, 'raises', raiseTo, street);
+    setFacing({ toBB: raiseTo });
+    setBusy(false);
+  }, [busy, streetIndex, scenario, facing, villainProfile, announce, pushState, resolveStreetEnd, endHand]);
+
+  const currentStreet = STREETS[streetIndex];
+  const isPreflop = streetIndex === 0;
+  const callDelta = facing ? Math.round((facing.toBB - heroStreetTotal) * 10) / 10 : 0;
+  const options = getHeroOptions(facing, callDelta, isPreflop, raiseCount);
+
+  const onOptionClick = (opt: ActionOption) => {
+    if (busy) return;
+    if (opt.needsBet) {
+      setBetMode(opt.value as 'bet' | 'raise');
+      const defaultBB = facing
+        ? Math.round(facing.toBB * (isPreflop ? 3 : 2.5) * 2) / 2
+        : Math.round(pot * 0.6 * 10) / 10;
+      setBetValue(String(defaultBB > 0 ? defaultBB : 1));
+    } else {
+      void handleHeroAction(opt.value);
+    }
   };
+
+  const onBetSubmit = () => {
+    const bb = parseFloat(betValue);
+    if (isNaN(bb) || bb <= 0) return;
+    void handleHeroAction(betMode === 'bet' ? 'bet' : 'raise', bb);
+  };
+
+  const heroActionCount = actionLog.filter(e => e.isHero).length;
+  const historyStreets = STREETS.filter(s => actionLog.some(e => e.street === s));
 
   return (
     <div className="coach-two-panel">
@@ -489,22 +676,18 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
             </div>
           )}
 
-          {phase === 'playing' && decisions.length > 0 && (
-            <div className="dg-decision-log">
-              <div className="t-section-label">Decisions</div>
-              {decisions.map((d, i) => (
-                <div key={i} className="dg-log-row dg-log-row--stacked">
-                  <div>
-                    <span className="dg-log-street">{d.street}</span>
-                    <span className="dg-log-action">
-                      {d.heroAction === 'bet' || d.heroAction === 'raise'
-                        ? `${d.heroAction} ${d.heroBetBB}BB`
-                        : d.heroAction}
-                    </span>
-                  </div>
-                  {d.rangeCats.length > 0 && (
-                    <span className="dg-log-range">{d.rangeCats.join(', ')}</span>
-                  )}
+          {historyStreets.length > 0 && (
+            <div className="dg-action-history">
+              <div className="t-section-label">Action History</div>
+              {historyStreets.map(s => (
+                <div key={s} className="dg-history-street">
+                  <div className="dg-history-street-label">{s}</div>
+                  {actionLog.filter(e => e.street === s).map((e, i) => (
+                    <div key={i} className={`dg-history-row ${e.isHero ? 'dg-history-row--hero' : 'dg-history-row--villain'}`}>
+                      <span className="dg-history-pos">{e.position}</span>
+                      <span className="dg-history-text">{e.text}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -520,31 +703,38 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       {/* ── Main content ── */}
       <div className="coach-content">
         {/* Game column */}
-        <div className="coach-game-col dg-game-col">
+        <div className={`coach-game-col dg-game-col ${phase === 'playing' ? 'dg-game-col--full' : ''}`}>
           <PokerTable
             scenario={scenario}
             streetIndex={streetIndex}
             pot={pot}
+            heroStack={heroStack}
+            villainStack={villainStack}
             heroBetBB={heroBetChip}
             villainBetBB={villainBetChip}
+            seatAction={seatAction}
           />
 
           {phase === 'playing' && (
             <div className="dg-action-panel">
-              <div className="dg-villain-action">
-                <span className="dg-villain-label">{scenario.villainPosition}</span>
-                <span className="dg-villain-verb">{vilActionStr}</span>
-              </div>
-
-              <RangeCategoryPicker
-                selected={currentRangeCats}
-                previousSelected={streetIndex > 0 ? new Set(decisions[streetIndex - 1]?.rangeCats ?? []) : undefined}
-                onChange={setCurrentRangeCats}
-              />
+              {!isPreflop && (
+                <RangeCategoryPicker
+                  selected={currentRangeCats}
+                  previousSelected={
+                    streetIndex > 1 && rangeCatsByStreet[STREETS[streetIndex - 1]]
+                      ? new Set(rangeCatsByStreet[STREETS[streetIndex - 1]])
+                      : undefined
+                  }
+                  onChange={setCurrentRangeCats}
+                  locked={busy}
+                />
+              )}
 
               <div className="dg-hero-label">Your action — {currentStreet}</div>
 
-              {betMode ? (
+              {busy ? (
+                <div className="dg-waiting">…</div>
+              ) : betMode ? (
                 <div className="dg-bet-row">
                   <input
                     className="dg-bet-input"
@@ -553,11 +743,11 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
                     step="0.5"
                     value={betValue}
                     onChange={e => setBetValue(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleBetSubmit()}
+                    onKeyDown={e => e.key === 'Enter' && onBetSubmit()}
                     autoFocus
                   />
                   <span className="dg-bet-unit">BB</span>
-                  <button className="dg-action-btn dg-action-btn--confirm" onClick={handleBetSubmit}>
+                  <button className="dg-action-btn dg-action-btn--confirm" onClick={onBetSubmit}>
                     Confirm
                   </button>
                   <button className="dg-action-btn dg-action-btn--cancel" onClick={() => setBetMode(null)}>
@@ -570,7 +760,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
                     <button
                       key={opt.value}
                       className={`dg-action-btn dg-action-btn--${opt.value}`}
-                      onClick={() => handleAction(opt)}
+                      onClick={() => onOptionClick(opt)}
                     >
                       {opt.label}
                     </button>
@@ -582,67 +772,58 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
 
           {phase === 'feedback' && (
             <div className="dg-complete-bar">
-              <span>Hand complete — {decisions.length} decision{decisions.length !== 1 ? 's' : ''} reviewed</span>
+              <span>Hand complete — {heroActionCount} decision{heroActionCount !== 1 ? 's' : ''} reviewed</span>
               <button className="new-hand-btn-bar" onClick={onNewScenario}>New Hand</button>
             </div>
           )}
         </div>
 
-        {/* Chat column */}
-        <div className="coach-chat-col">
-          <div className="coach-chat-header">
-            <div className="coach-header-top">
-              <h2>Coach</h2>
-              {rating !== null && (
-                <span className={`rating-badge ${rating >= 80 ? 'high' : rating >= 60 ? 'mid' : 'low'}`}>
-                  {rating}/100
-                </span>
-              )}
-            </div>
-            {phase === 'playing' && (
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>
-                Play out the hand — coach reviews when it ends.
-              </p>
-            )}
-          </div>
-
-          <div className="coach-chat dg-chat">
-            <div className="messages">
-              {messages.length === 0 && (
-                <div className="coach-empty">
-                  <div className="coach-empty-icon">🎯</div>
-                  <p>Play through the hand making your decisions. When the hand ends, your coach will review every choice you made against this villain type.</p>
-                </div>
-              )}
-              {messages.map((msg, i) => (
-                <div key={i} className={`message ${msg.role}`}>
-                  <div className="message-role">{msg.role === 'user' ? 'Hand' : 'Coach'}</div>
-                  <div className="message-content" style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="message assistant">
-                  <div className="message-role">Coach</div>
-                  <div className="message-content typing"><span /><span /><span /></div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+        {/* Chat column — hidden until the hand is over */}
+        {phase === 'feedback' && (
+          <div className="coach-chat-col">
+            <div className="coach-chat-header">
+              <div className="coach-header-top">
+                <h2>Coach</h2>
+                {rating !== null && (
+                  <span className={`rating-badge ${rating >= 80 ? 'high' : rating >= 60 ? 'mid' : 'low'}`}>
+                    {rating}/100
+                  </span>
+                )}
+              </div>
             </div>
 
-            {phase === 'feedback' && messages.length > 1 && (
-              <form className="follow-up-form" onSubmit={e => { e.preventDefault(); void handleFollowUp(); }}>
-                <input
-                  type="text"
-                  value={followUpInput}
-                  onChange={e => setFollowUpInput(e.target.value)}
-                  placeholder="Ask a follow-up question..."
-                  disabled={isLoading}
-                />
-                <button type="submit" disabled={isLoading || !followUpInput.trim()}>Send</button>
-              </form>
-            )}
+            <div className="coach-chat dg-chat">
+              <div className="messages">
+                {messages.map((msg, i) => (
+                  <div key={i} className={`message ${msg.role}`}>
+                    <div className="message-role">{msg.role === 'user' ? 'Hand' : 'Coach'}</div>
+                    <div className="message-content" style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="message assistant">
+                    <div className="message-role">Coach</div>
+                    <div className="message-content typing"><span /><span /><span /></div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {messages.length > 1 && (
+                <form className="follow-up-form" onSubmit={e => { e.preventDefault(); void handleFollowUp(); }}>
+                  <input
+                    type="text"
+                    value={followUpInput}
+                    onChange={e => setFollowUpInput(e.target.value)}
+                    placeholder="Ask a follow-up question..."
+                    disabled={isLoading}
+                  />
+                  <button type="submit" disabled={isLoading || !followUpInput.trim()}>Send</button>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
