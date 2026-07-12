@@ -447,7 +447,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       const delta = Math.round((toBB - villainTotalRef.current) * 10) / 10;
       villainTotalRef.current = toBB;
       villainStackRef.current -= delta;
-      potRef.current += delta;
       raiseCountRef.current = 1;
       pushState();
       await announce(scenario.villainPosition, false, action.action === 'raises' ? 'raises' : 'bets', toBB, street);
@@ -514,12 +513,21 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario]);
 
+  // Bets/calls/raises sit in front of the acting player (as their bet chip)
+  // for the rest of the street — they only get swept into the visible pot
+  // once the street (or the hand) is over, matching how a real table looks.
+  const sweepPot = useCallback(() => {
+    potRef.current = Math.round((potRef.current + heroTotalRef.current + villainTotalRef.current) * 10) / 10;
+  }, []);
+
   const resolveStreetEnd = useCallback(async (justResolvedStreet: StreetName) => {
     if (justResolvedStreet !== 'preflop') {
       rangeCatsByStreetRef.current = { ...rangeCatsByStreetRef.current, [justResolvedStreet]: [...currentRangeCatsRef.current] };
       setRangeCatsByStreet({ ...rangeCatsByStreetRef.current });
     }
+    sweepPot();
     if (justResolvedStreet === 'river') {
+      pushState();
       setPhase('feedback');
       await kickOffCoach();
       setBusy(false);
@@ -534,13 +542,15 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     const nextIdx = STREETS.indexOf(justResolvedStreet) + 1;
     setStreetIndex(nextIdx);
     await runVillainOpensStreet(nextIdx);
-  }, [pushState, runVillainOpensStreet, kickOffCoach]);
+  }, [sweepPot, pushState, runVillainOpensStreet, kickOffCoach]);
 
   const endHand = useCallback(async (resultNote: string) => {
+    sweepPot();
+    pushState();
     setPhase('feedback');
     await kickOffCoach(resultNote);
     setBusy(false);
-  }, [kickOffCoach]);
+  }, [sweepPot, pushState, kickOffCoach]);
 
   const handleHeroAction = useCallback(async (kind: HeroActionType, toBB?: number) => {
     if (busy) return;
@@ -551,7 +561,8 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
 
     if (kind === 'fold') {
       await announce(scenario.heroPosition, true, 'folds', undefined, street);
-      await endHand(`Result: Hero folds. Villain (${scenario.villainPosition}) wins the ${potRef.current.toFixed(1)}BB pot.`);
+      const finalPot = potRef.current + heroTotalRef.current + villainTotalRef.current;
+      await endHand(`Result: Hero folds. Villain (${scenario.villainPosition}) wins the ${finalPot.toFixed(1)}BB pot.`);
       return;
     }
 
@@ -572,7 +583,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
         const vDelta = Math.round((vToBB - villainTotalRef.current) * 10) / 10;
         villainTotalRef.current = vToBB;
         villainStackRef.current -= vDelta;
-        potRef.current += vDelta;
         raiseCountRef.current = 1;
         pushState();
         await announce(scenario.villainPosition, false, 'bets', vToBB, street);
@@ -587,7 +597,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       const delta = Math.round((callTo - heroTotalRef.current) * 10) / 10;
       heroTotalRef.current = callTo;
       heroStackRef.current -= delta;
-      potRef.current += delta;
       pushState();
       await announce(scenario.heroPosition, true, 'calls', undefined, street);
       await resolveStreetEnd(street);
@@ -599,7 +608,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     const delta = Math.round((myToBB - heroTotalRef.current) * 10) / 10;
     heroTotalRef.current = myToBB;
     heroStackRef.current -= delta;
-    potRef.current += delta;
     raiseCountRef.current += 1;
     pushState();
     await announce(scenario.heroPosition, true, kind === 'bet' ? 'bets' : 'raises', myToBB, street);
@@ -609,7 +617,8 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
 
     if (reaction === 'fold') {
       await announce(scenario.villainPosition, false, 'folds', undefined, street);
-      await endHand(`Result: Villain folds. Hero wins the ${potRef.current.toFixed(1)}BB pot.`);
+      const finalPot = potRef.current + heroTotalRef.current + villainTotalRef.current;
+      await endHand(`Result: Villain folds. Hero wins the ${finalPot.toFixed(1)}BB pot.`);
       return;
     }
 
@@ -617,7 +626,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       const vDelta = Math.round((myToBB - villainTotalRef.current) * 10) / 10;
       villainTotalRef.current = myToBB;
       villainStackRef.current -= vDelta;
-      potRef.current += vDelta;
       pushState();
       await announce(scenario.villainPosition, false, 'calls', undefined, street);
       await resolveStreetEnd(street);
@@ -629,7 +637,6 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     const vDelta = Math.round((raiseTo - villainTotalRef.current) * 10) / 10;
     villainTotalRef.current = raiseTo;
     villainStackRef.current -= vDelta;
-    potRef.current += vDelta;
     raiseCountRef.current += 1;
     pushState();
     await announce(scenario.villainPosition, false, 'raises', raiseTo, street);
