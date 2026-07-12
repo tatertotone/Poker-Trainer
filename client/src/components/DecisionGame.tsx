@@ -45,13 +45,16 @@ function getVillainAction(scenario: FullScenario, streetIndex: number): Action |
   ) ?? null;
 }
 
-function actionText(kind: 'checks' | 'calls' | 'bets' | 'raises' | 'folds', toBB?: number): string {
+type ActionKind = 'checks' | 'calls' | 'bets' | 'raises' | 'folds' | 'posts';
+
+function actionText(kind: ActionKind, toBB?: number): string {
   switch (kind) {
     case 'checks': return 'Checks';
     case 'calls': return 'Calls';
     case 'folds': return 'Folds';
     case 'bets': return `Bets ${toBB}BB`;
     case 'raises': return `Raises to ${toBB}BB`;
+    case 'posts': return `Posts ${toBB}BB`;
   }
 }
 
@@ -301,7 +304,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     setActionLog([...actionLogRef.current]);
   }, []);
 
-  const announce = useCallback(async (position: Position, isHero: boolean, kind: 'checks' | 'calls' | 'bets' | 'raises' | 'folds', toBB: number | undefined, street: StreetName) => {
+  const announce = useCallback(async (position: Position, isHero: boolean, kind: ActionKind, toBB: number | undefined, street: StreetName) => {
     const text = actionText(kind, toBB);
     setSeatAction(prev => ({ ...prev, [position]: text }));
     actionLogRef.current = [...actionLogRef.current, { street, position, isHero, text }];
@@ -441,9 +444,10 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
       setFacing(null);
     } else {
       const toBB = action.sizingBB ?? Math.round(potRef.current * (action.sizingPct ?? 0) / 100 * 10) / 10;
+      const delta = Math.round((toBB - villainTotalRef.current) * 10) / 10;
       villainTotalRef.current = toBB;
-      villainStackRef.current -= toBB;
-      potRef.current += toBB;
+      villainStackRef.current -= delta;
+      potRef.current += delta;
       raiseCountRef.current = 1;
       pushState();
       await announce(scenario.villainPosition, false, action.action === 'raises' ? 'raises' : 'bets', toBB, street);
@@ -452,10 +456,12 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     setBusy(false);
   }, [scenario, announce, pushState]);
 
-  // Resets per-hand state and kicks off the preflop opening whenever a new
-  // scenario (new hand) arrives.
+  // Resets per-hand state, posts blinds (SB 0.5BB / BB 1BB, charged against
+  // whichever of hero/villain actually holds that seat), and kicks off the
+  // preflop opening whenever a new scenario (new hand) arrives.
   useEffect(() => {
-    potRef.current = 0;
+    let cancelled = false;
+
     heroStackRef.current = scenario.stackDepthBB;
     villainStackRef.current = scenario.stackDepthBB;
     heroTotalRef.current = 0;
@@ -464,29 +470,47 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     actionLogRef.current = [];
     rangeCatsByStreetRef.current = {};
 
+    const blindOf = (pos: Position): number => (pos === 'SB' ? 0.5 : pos === 'BB' ? 1 : 0);
+    const heroBlind = blindOf(scenario.heroPosition);
+    const villainBlind = blindOf(scenario.villainPosition);
+    heroStackRef.current -= heroBlind;
+    heroTotalRef.current = heroBlind;
+    villainStackRef.current -= villainBlind;
+    villainTotalRef.current = villainBlind;
+    // Total blinds are always 1.5BB (0.5 + 1); any portion not covered by
+    // hero/villain is dead money from a folded player who isn't modeled.
+    potRef.current = 1.5;
+
     setStreetIndex(0);
-    setPot(0);
-    setHeroStack(scenario.stackDepthBB);
-    setVillainStack(scenario.stackDepthBB);
-    setHeroStreetTotal(0);
-    setHeroBetChip(null);
-    setVillainBetChip(null);
     setFacing(null);
     setRaiseCount(0);
     setBetMode(null);
     setBetValue('');
-    setBusy(false);
+    setBusy(true);
     setPhase('playing');
     setCurrentRangeCats(new Set());
     setRangeCatsByStreet({});
     setSeatAction({});
-    setActionLog([]);
     setMessages([]);
     setIsLoading(false);
     setFollowUpInput('');
     setRating(null);
+    pushState();
 
-    void runVillainOpensStreet(0);
+    async function start() {
+      if (heroBlind > 0) {
+        await announce(scenario.heroPosition, true, 'posts', heroBlind, 'preflop');
+        if (cancelled) return;
+      }
+      if (villainBlind > 0) {
+        await announce(scenario.villainPosition, false, 'posts', villainBlind, 'preflop');
+        if (cancelled) return;
+      }
+      await runVillainOpensStreet(0);
+    }
+    void start();
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario]);
 
@@ -545,9 +569,10 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
         await resolveStreetEnd(street);
       } else {
         const vToBB = vAction.sizingBB ?? Math.round(potRef.current * (vAction.sizingPct ?? 0) / 100 * 10) / 10;
+        const vDelta = Math.round((vToBB - villainTotalRef.current) * 10) / 10;
         villainTotalRef.current = vToBB;
-        villainStackRef.current -= vToBB;
-        potRef.current += vToBB;
+        villainStackRef.current -= vDelta;
+        potRef.current += vDelta;
         raiseCountRef.current = 1;
         pushState();
         await announce(scenario.villainPosition, false, 'bets', vToBB, street);
