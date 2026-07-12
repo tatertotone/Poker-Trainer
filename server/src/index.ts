@@ -228,6 +228,11 @@ app.post('/api/decision-coach', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.write(`data: ${JSON.stringify({ error: 'ANTHROPIC_API_KEY is not set on the server' })}\n\n`);
+    return res.end();
+  }
+
   const messages: Anthropic.MessageParam[] = history.map(m => ({
     role: m.role, content: m.content,
   }));
@@ -245,7 +250,8 @@ app.post('/api/decision-coach', async (req, res) => {
     res.end();
   } catch (err) {
     console.error(err);
-    res.write(`data: ${JSON.stringify({ error: 'Failed to reach Claude' })}\n\n`);
+    const message = err instanceof Error ? err.message : String(err);
+    res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     res.end();
   }
 });

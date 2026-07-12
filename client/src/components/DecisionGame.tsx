@@ -331,50 +331,82 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     return s;
   }, [scenario, villainProfile]);
 
+  // Streams a coach response for the given conversation history. Surfaces
+  // both network/HTTP failures and in-band SSE `error` events as a visible
+  // chat message instead of leaving the UI stuck on the typing indicator —
+  // previously any failure (bad API key, model error, timeout) was silently
+  // swallowed because only `data.text` was ever read from the stream.
+  const runCoachStream = useCallback(async (history: ChatMessage[]) => {
+    setIsLoading(true);
+    let text = '';
+    let sawError: string | null = null;
+    try {
+      const response = await fetch(`${API_BASE}/api/decision-coach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          history,
+          villainName: villainProfile.name,
+          villainContext: villainProfile.coachContext,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const bodyText = await response.text().catch(() => '');
+        throw new Error(bodyText || `Coach request failed (HTTP ${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) {
+              text += data.text;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: text };
+                return updated;
+              });
+            } else if (data.error) {
+              sawError = data.error;
+            }
+          } catch { /* skip malformed SSE line */ }
+        }
+      }
+
+      if (sawError && !text) throw new Error(sawError);
+
+      const match = text.match(/\*\*(?:Updated )?Rating:\s*(\d+)\/100\*\*/i);
+      if (match) setRating(parseInt(match[1]));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      const errorMsg = `⚠️ Coach is unavailable right now (${reason}). Check that ANTHROPIC_API_KEY is configured on the server.`;
+      setMessages(prev => {
+        const updated = [...prev];
+        if (updated.length > 0 && updated[updated.length - 1].role === 'assistant' && updated[updated.length - 1].content === '') {
+          updated[updated.length - 1] = { role: 'assistant', content: errorMsg };
+        } else {
+          updated.push({ role: 'assistant', content: errorMsg });
+        }
+        return updated;
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [villainProfile]);
+
   const streamFeedback = useCallback(async (userText: string) => {
     const userMsg: ChatMessage = { role: 'user', content: userText };
     setMessages([userMsg]);
-    setIsLoading(true);
-
-    let text = '';
-    const response = await fetch(`${API_BASE}/api/decision-coach`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        history: [userMsg],
-        villainName: villainProfile.name,
-        villainContext: villainProfile.coachContext,
-      }),
-    });
-
-    if (!response.body) { setIsLoading(false); return; }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
-      for (const line of lines) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (data.text) {
-            text += data.text;
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { role: 'assistant', content: text };
-              return updated;
-            });
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    const match = text.match(/\*\*(?:Updated )?Rating:\s*(\d+)\/100\*\*/i);
-    if (match) setRating(parseInt(match[1]));
-    setIsLoading(false);
-  }, [villainProfile]);
+    await runCoachStream([userMsg]);
+  }, [runCoachStream]);
 
   const handleFollowUp = async () => {
     if (!followUpInput.trim() || isLoading) return;
@@ -382,46 +414,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
     const history = [...messages, userMsg];
     setMessages(history);
     setFollowUpInput('');
-    setIsLoading(true);
-
-    let text = '';
-    const response = await fetch(`${API_BASE}/api/decision-coach`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        history,
-        villainName: villainProfile.name,
-        villainContext: villainProfile.coachContext,
-      }),
-    });
-
-    if (!response.body) { setIsLoading(false); return; }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
-      for (const line of lines) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (data.text) {
-            text += data.text;
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { role: 'assistant', content: text };
-              return updated;
-            });
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    const match = text.match(/\*\*(?:Updated )?Rating:\s*(\d+)\/100\*\*/i);
-    if (match) setRating(parseInt(match[1]));
-    setIsLoading(false);
+    await runCoachStream(history);
   };
 
   const kickOffCoach = useCallback(async (resultNote?: string) => {
@@ -623,9 +616,10 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
   const isPreflop = streetIndex === 0;
   const callDelta = facing ? Math.round((facing.toBB - heroStreetTotal) * 10) / 10 : 0;
   const options = getHeroOptions(facing, callDelta, isPreflop, raiseCount);
+  const needsRange = !isPreflop && currentRangeCats.size === 0;
 
   const onOptionClick = (opt: ActionOption) => {
-    if (busy) return;
+    if (busy || needsRange) return;
     if (opt.needsBet) {
       setBetMode(opt.value as 'bet' | 'raise');
       const defaultBB = facing
@@ -638,6 +632,7 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
   };
 
   const onBetSubmit = () => {
+    if (needsRange) return;
     const bb = parseFloat(betValue);
     if (isNaN(bb) || bb <= 0) return;
     void handleHeroAction(betMode === 'bet' ? 'bet' : 'raise', bb);
@@ -755,17 +750,23 @@ export default function DecisionGame({ scenario, villainProfile, onNewScenario, 
                   </button>
                 </div>
               ) : (
-                <div className="dg-action-btns">
-                  {options.map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`dg-action-btn dg-action-btn--${opt.value}`}
-                      onClick={() => onOptionClick(opt)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  {needsRange && (
+                    <div className="dg-range-required">Range villain before you act</div>
+                  )}
+                  <div className="dg-action-btns">
+                    {options.map(opt => (
+                      <button
+                        key={opt.value}
+                        className={`dg-action-btn dg-action-btn--${opt.value}`}
+                        onClick={() => onOptionClick(opt)}
+                        disabled={needsRange}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}

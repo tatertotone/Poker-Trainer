@@ -52,6 +52,11 @@ export default async function handler(req: any, res: any) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.write(`data: ${JSON.stringify({ error: 'ANTHROPIC_API_KEY is not set on the server' })}\n\n`);
+    return res.end();
+  }
+
   const { history, villainName, villainContext } = req.body;
   const messages: Anthropic.MessageParam[] = (history as Message[]).map(m => ({
     role: m.role, content: m.content,
@@ -70,7 +75,8 @@ export default async function handler(req: any, res: any) {
     res.end();
   } catch (err) {
     console.error(err);
-    res.write(`data: ${JSON.stringify({ error: 'Failed to reach Claude' })}\n\n`);
+    const message = err instanceof Error ? err.message : String(err);
+    res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     res.end();
   }
 }
